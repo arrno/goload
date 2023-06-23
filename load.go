@@ -45,32 +45,49 @@ func runJob(j Job) {
 	fmt.Println("Running job: " + j.Name)
 	var wg sync.WaitGroup
 	results := make(chan time.Duration, j.Workers)
+	done := make(chan interface{})
 	var totalLatency float64
 	var seen int
 	var spawned int
+
+	// Max timeout.
+	go func() {
+		<-time.After(time.Duration(j.Duration) * time.Second)
+		wg.Wait()
+		for seen < spawned {
+			re := <-results
+			totalLatency += re.Seconds()
+			seen++
+		}
+		fmt.Printf("Total job latency: %v\n", totalLatency)
+		fmt.Printf("Average job latency: %v\n", totalLatency/float64(seen))
+		close(results)
+		close(done)
+	}()
+	// Log interval loop.
+	go func() {
+		for {
+			select {
+			case <-time.After(time.Duration(j.LogInterval) * time.Second):
+				fmt.Printf("Total job latency: %v\n", totalLatency)
+				fmt.Printf("Average job latency: %v\n", totalLatency/float64(seen))
+			case <-done:
+				return
+			}
+		}
+	}()
+	// Spawn interval loop.
 	for {
 		select {
-		case <-time.After(time.Duration(j.Duration) * time.Second):
-			wg.Wait()
-			for seen < spawned {
-				re := <-results
-				totalLatency += re.Seconds()
-				seen++
-			}
-			fmt.Printf("Total job latency: %v\n", totalLatency)
-			fmt.Printf("Average job latency: %v\n", totalLatency/float64(seen))
-			close(results)
-			return
 		case <-time.After(time.Duration(j.Interval) * time.Second):
 			wg.Add(1)
 			go runRound(j.Workers, j.Request, &wg, results)
 			spawned += int(j.Workers)
-		case <-time.After(time.Duration(j.LogInterval) * time.Second):
-			fmt.Printf("Total job latency: %v\n", totalLatency)
-			fmt.Printf("Average job latency: %v\n", totalLatency/float64(seen))
 		case re := <-results:
 			totalLatency += re.Seconds()
 			seen++
+		case <-done:
+			return
 		}
 	}
 }
@@ -86,7 +103,7 @@ func runRound(workers uint, req HttpRequest, wg *sync.WaitGroup, results chan<- 
 			startTime := time.Now()
 			res, _ := http.DefaultClient.Do(r)
 			duration := time.Now().Sub(startTime)
-			fmt.Println(req.URI + " " + string(req.Method) + res.Status + duration.String())
+			fmt.Println(req.URI + " " + string(req.Method) + " " + res.Status + " " + duration.String())
 			results <- duration
 		}()
 	}
