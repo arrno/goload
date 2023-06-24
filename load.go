@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -39,10 +40,12 @@ func runSchedule(schedule []Job) {
 	for _, job := range schedule {
 		runJob(job)
 	}
+	doLog([]string{"Complete...\n"}, true)
 }
 
 func runJob(j Job) {
-	fmt.Println("Running job: " + j.Name)
+
+	doLog([]string{"Starting job:", j.Name + "\n"}, true)
 	var wg sync.WaitGroup
 	results := make(chan time.Duration, j.Workers)
 	done := make(chan interface{})
@@ -52,6 +55,7 @@ func runJob(j Job) {
 
 	// Max timeout.
 	go func() {
+
 		<-time.After(time.Duration(j.Duration) * time.Second)
 		wg.Wait()
 		for seen < spawned {
@@ -59,8 +63,12 @@ func runJob(j Job) {
 			totalLatency += re.Seconds()
 			seen++
 		}
-		fmt.Printf("Total job latency: %v\n", totalLatency)
-		fmt.Printf("Average job latency: %v\n", totalLatency/float64(seen))
+
+		tl := fmt.Sprintf("%v", totalLatency)
+		al := fmt.Sprintf("%v", totalLatency/float64(seen))
+		doLog([]string{"Total job latency:", truncate(tl, 6), "seconds"}, true)
+		doLog([]string{"Average job latency:", truncate(al, 6), "seconds\n"}, false)
+
 		close(results)
 		close(done)
 	}()
@@ -69,8 +77,12 @@ func runJob(j Job) {
 		for {
 			select {
 			case <-time.After(time.Duration(j.LogInterval) * time.Second):
-				fmt.Printf("Total job latency: %v\n", totalLatency)
-				fmt.Printf("Average job latency: %v\n", totalLatency/float64(seen))
+
+				tl := fmt.Sprintf("%v", totalLatency)
+				al := fmt.Sprintf("%v", totalLatency/float64(seen))
+				doLog([]string{"Total job latency:", truncate(tl, 6), "seconds"}, true)
+				doLog([]string{"Average job latency:", truncate(al, 6), "seconds\n"}, false)
+
 			case <-done:
 				return
 			}
@@ -83,9 +95,11 @@ func runJob(j Job) {
 			wg.Add(1)
 			go runRound(j.Workers, j.Request, &wg, results)
 			spawned += int(j.Workers)
+
 		case re := <-results:
 			totalLatency += re.Seconds()
 			seen++
+
 		case <-done:
 			return
 		}
@@ -99,12 +113,54 @@ func runRound(workers uint, req HttpRequest, wg *sync.WaitGroup, results chan<- 
 	for i = 0; i < workers; i++ {
 		// run uinit
 		go func() {
+
 			r, _ := http.NewRequest(string(req.Method), req.URI, nil)
 			startTime := time.Now()
 			res, _ := http.DefaultClient.Do(r)
 			duration := time.Now().Sub(startTime)
-			fmt.Println(req.URI + " " + string(req.Method) + " " + res.Status + " " + duration.String())
+
+			if req.Log {
+				d := duration.String()
+				doLog([]string{req.URI, string(req.Method), res.Status, truncate(d, 6)}, false)
+			}
 			results <- duration
 		}()
+	}
+}
+
+// ---- Utilities ---- //
+
+func doLog(args []string, lineBefore bool) {
+	var nargs []string
+	if lineBefore {
+		nargs = append(nargs, "\n"+time.Now().Format("2006-01-02 15:04:05"))
+	} else {
+		nargs = append(nargs, time.Now().Format("2006-01-02 15:04:05"))
+	}
+	nargs = append(nargs, args...)
+	fmt.Println(strings.Join(nargs, "\t"))
+}
+
+func truncate(s string, l int) string {
+	if len(s) <= l {
+		return s
+	}
+	for i, _ := range s {
+		if i+1 == l {
+			return s[:i+1]
+		}
+	}
+	return s
+}
+
+func truncateInPlace(s *string, l int) {
+	if len(*s) <= l {
+		return
+	}
+	for i, _ := range *s {
+		if i+1 == l {
+			*s = (*s)[:i+1]
+			return
+		}
 	}
 }
