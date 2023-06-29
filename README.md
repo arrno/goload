@@ -13,7 +13,7 @@ j := Job{
         Method:  "GET",
         URI:     "https://www.example.com",
         Body:    nil,
-        Headers: map[string]string{},
+        Headers: http.Header{},
         Log:     true,
     },
 }
