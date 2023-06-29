@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -31,7 +33,7 @@ type HttpRequest struct {
 	Method  METHOD
 	URI     string
 	Body    any
-	Headers map[string]string
+	Headers http.Header
 	Log     bool
 }
 
@@ -114,7 +116,15 @@ func runRound(workers uint, req HttpRequest, wg *sync.WaitGroup, results chan<- 
 		// run uinit
 		go func() {
 
-			r, _ := http.NewRequest(string(req.Method), req.URI, nil)
+			body, err := json.Marshal(req.Body)
+			if err != nil {
+				doLog([]string{req.URI, string(req.Method), "Err", "Unable to marshal payload."}, false)
+				results <- 0
+				return
+			}
+
+			r, _ := http.NewRequest(string(req.Method), req.URI, bytes.NewReader(body))
+			r.Header = req.Headers
 			startTime := time.Now()
 			res, _ := http.DefaultClient.Do(r)
 			duration := time.Now().Sub(startTime)
